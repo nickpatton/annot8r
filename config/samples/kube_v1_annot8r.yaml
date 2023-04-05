@@ -1,0 +1,24 @@
+apiVersion: kube.tools/v1
+kind: Annot8r
+metadata:
+  labels:
+    app.kubernetes.io/name: annot8r
+    app.kubernetes.io/instance: annot8r-sample
+    app.kubernetes.io/part-of: annot8r
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: annot8r
+  name: annot8r-sample
+spec:
+  name: coredns
+  kind: deployment
+  namespace: kube-system
+  annotations:
+    ad.datadoghq.com/coredns.check_names: '["coredns"]'
+    ad.datadoghq.com/coredns.init_configs: '[{}]'
+    ad.datadoghq.com/coredns.instances: |
+      [
+        {
+          "openmetrics_endpoint": "http://%%host%%:9153/metrics",
+          "tags": ["dns-pod:%%host%%"]
+        }
+      ]

@@ -1,0 +1,27 @@
+# permissions for end users to view annot8rs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: annot8r-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: annot8r
+    app.kubernetes.io/part-of: annot8r
+    app.kubernetes.io/managed-by: kustomize
+  name: annot8r-viewer-role
+rules:
+- apiGroups:
+  - kube.tools
+  resources:
+  - annot8rs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - kube.tools
+  resources:
+  - annot8rs/status
+  verbs:
+  - get
