@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/created-by: annot8r
   name: annot8r-sample
+  finalizers:
+    - annot8r.kube.tools/finalizer
 spec:
   name: coredns
   kind: deployment

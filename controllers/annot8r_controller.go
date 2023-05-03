@@ -18,9 +18,7 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 
-	"golang.org/x/exp/maps"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -30,8 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	// "annot8r/annoLabler"
-
+	"annot8r/annoLabler"
 	kubev1 "annot8r/api/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -78,6 +75,7 @@ func (r *Annot8rReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		// registering our finalizer.
 		if !controllerutil.ContainsFinalizer(&annot8r, finalizerName) {
 			controllerutil.AddFinalizer(&annot8r, finalizerName)
+			log.Log.Info("adding finalizer to annot8r resource: " + annot8r.Name)
 			if err := r.Update(ctx, &annot8r); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -86,7 +84,8 @@ func (r *Annot8rReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		// The object is being deleted
 		if controllerutil.ContainsFinalizer(&annot8r, finalizerName) {
 			// our finalizer is present, so lets handle any external dependency
-			if err := r.unDoAnnotationsLabels(&annot8r, ctx); err != nil {
+			// on deletion, 'remove' is set to true
+			if err := r.processAnnot8r(&annot8r, ctx, true); err != nil {
 				// if fail to delete the external dependency here, return with error
 				// so that it can be retried
 				return ctrl.Result{}, err
@@ -94,6 +93,7 @@ func (r *Annot8rReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 			// remove our finalizer from the list and update it.
 			controllerutil.RemoveFinalizer(&annot8r, finalizerName)
+			log.Log.Info("removing finalizer from annot8r resource: " + annot8r.Name)
 			if err := r.Update(ctx, &annot8r); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -103,34 +103,8 @@ func (r *Annot8rReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	switch annot8r.Spec.Kind {
-	case "deployment":
-		log.Log.Info("processing annotations and labels on deployment")
-		// desiredDeployment = annoLabler.AnnotateDeployment(annot8r.Spec.Name, annot8r.Spec.Namespace, annot8r.Spec.Annotations)
-
-		var currentDeployment appsv1.Deployment
-		var currentDeploymentLookup types.NamespacedName
-		currentDeploymentLookup.Name = annot8r.Spec.Name
-		currentDeploymentLookup.Namespace = annot8r.Spec.Namespace
-		if err := r.Get(ctx, currentDeploymentLookup, &currentDeployment); err != nil {
-			log.Log.Error(err, "unable to lookup the deployment")
-			return ctrl.Result{}, client.IgnoreNotFound(err)
-		}
-
-		if currentDeployment.Spec.Template.ObjectMeta.Annotations == nil {
-			currentDeployment.Spec.Template.ObjectMeta.Annotations = map[string]string{
-				"annot8r.kube.tools/v1": "true",
-			}
-		}
-		maps.Copy(currentDeployment.Spec.Template.ObjectMeta.Annotations, annot8r.Spec.Annotations)
-		if err := r.Update(ctx, &currentDeployment); err != nil {
-			log.Log.Error(err, "unable to update the deployment")
-			return ctrl.Result{}, client.IgnoreNotFound(err)
-		}
-
-	default:
-		fmt.Println("Error.")
-	}
+	// On reconcile, 'remove' is set to false
+	r.processAnnot8r(&annot8r, ctx, false)
 
 	return ctrl.Result{}, nil
 }
@@ -144,38 +118,37 @@ func (r *Annot8rReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				// The reconciler adds a finalizer so we perform clean-up
 				// when the delete timestamp is added
 				// Suppress Delete events to avoid filtering them out in the Reconcile function
-				log.Log.Info("deleting " + e.Object.GetName() + " Annot8r resource")
+				log.Log.Info("deleting annot8r resource: " + e.Object.GetName())
 				return false
 			},
 		}).
 		Complete(r)
 }
 
-func (r *Annot8rReconciler) unDoAnnotationsLabels(annot8r *kubev1.Annot8r, ctx context.Context) error {
-	log.Log.Info("removing annotations and/or labels from resource")
+func (r *Annot8rReconciler) processAnnot8r(annot8r *kubev1.Annot8r, ctx context.Context, remove bool) error {
+
+	var lookup types.NamespacedName
+	lookup.Name = annot8r.Spec.Name
+	lookup.Namespace = annot8r.Spec.Namespace
+
 	switch annot8r.Spec.Kind {
 	case "deployment":
-		var currentDeployment appsv1.Deployment
-		var currentDeploymentLookup types.NamespacedName
-		currentDeploymentLookup.Name = annot8r.Spec.Name
-		currentDeploymentLookup.Namespace = annot8r.Spec.Namespace
-		if err := r.Get(ctx, currentDeploymentLookup, &currentDeployment); err != nil {
+		log.Log.Info("processing annotations on deployment: " + annot8r.Spec.Name)
+		var deployment appsv1.Deployment
+
+		if err := r.Get(ctx, lookup, &deployment); err != nil {
 			log.Log.Error(err, "unable to lookup the deployment")
 			return client.IgnoreNotFound(err)
 		}
-		for key, _ := range annot8r.Spec.Annotations {
-			delete(currentDeployment.Spec.Template.ObjectMeta.Annotations, key)
-		}
 
-		// remove default annot8r annotation (added in cases where no original annotations exist on the resource)
-		delete(currentDeployment.Spec.Template.ObjectMeta.Annotations, "annot8r.kube.tools/v1")
+		annoLabler.AnnotateDeploymentPodSpec(annot8r.Spec.Annotations, &deployment, remove)
 
-		if err := r.Update(ctx, &currentDeployment); err != nil {
+		if err := r.Update(ctx, &deployment); err != nil {
 			log.Log.Error(err, "unable to update the deployment")
 			return client.IgnoreNotFound(err)
 		}
 	default:
-		fmt.Println("Error undoing annotations.")
+		log.Log.Info("unable to handle annot8r kind: " + annot8r.Spec.Kind)
 	}
 	return nil
 }
